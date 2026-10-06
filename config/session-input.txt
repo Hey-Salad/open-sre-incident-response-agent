@@ -1,0 +1,5 @@
+Please help triage this production incident.
+
+We are testing the SRE incident response agent in a fresh OpenAI Agents API session. No logs, runbooks, deployment history, or incident timeline have been attached yet.
+
+Return a concise incident-intake checklist, the missing context you need, a suggested investigation plan, and the first safe next steps.
