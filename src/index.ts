@@ -1,11 +1,8 @@
 import agentDefinition from "../config/agent-definition.json";
+import type { Env } from "./env";
+import { guardSessionStart } from "./session-auth";
 
-interface Env {
-  OPENAI_API_KEY: string;
-  OPENAI_PROJECT: string;
-  OPENAI_BASE_URL: string;
-  AGENTS_ENVIRONMENT_TYPE: string;
-}
+export { SessionStartLimiter } from "./session-start-limiter";
 
 type AgentCreateResponse = {
   id?: string;
@@ -15,7 +12,7 @@ type AgentCreateResponse = {
 const DEFAULT_INPUT = "Please help triage this production incident.\n\nWe are testing the SRE incident response agent in a fresh OpenAI Agents API session. No logs, runbooks, deployment history, or incident timeline have been attached yet.\n\nReturn a concise incident-intake checklist, the missing context you need, a suggested investigation plan, and the first safe next steps.";
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/") {
@@ -23,10 +20,12 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return jsonResponse({ ok: true, service: "sre-incident-response-agent" });
+      return jsonResponse({ ok: true, service: "open-sre-incident-response-agent" });
     }
 
     if (request.method === "POST" && url.pathname === "/api/sessions") {
+      const denied = await guardSessionStart(request, env);
+      if (denied) return denied;
       return createAndStreamSession(request, env);
     }
 
@@ -212,6 +211,18 @@ function renderHome(): string {
       font-weight: 650;
       margin-bottom: 10px;
     }
+    input[type="password"] {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 42px;
+      margin-bottom: 16px;
+      padding: 10px 14px;
+      border: 1px solid #c9d1dc;
+      border-radius: 8px;
+      background: #ffffff;
+      color: inherit;
+      font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
     textarea {
       box-sizing: border-box;
       width: 100%;
@@ -267,10 +278,12 @@ function renderHome(): string {
 <body>
   <header>
     <h1>SRE Incident Response Agent</h1>
-    <p>Create a reusable OpenAI Agents API SRE incident responder, start an OpenAI-hosted session from its returned agent ID, and stream raw session events.</p>
+    <p>Create a reusable OpenAI Agents API SRE incident responder, start an OpenAI-hosted session from its returned agent ID, and stream raw session events. Session start requires the bearer token configured for this worker.</p>
   </header>
   <main>
     <form id="agent-form">
+      <label for="token">Session token</label>
+      <input id="token" name="token" type="password" autocomplete="off" spellcheck="false">
       <label for="input">Initial user message</label>
       <textarea id="input" name="input">${escapeHtml(DEFAULT_INPUT)}</textarea>
       <button id="run" type="submit">Run triage</button>
@@ -283,6 +296,7 @@ function renderHome(): string {
     const form = document.querySelector("#agent-form");
     const button = document.querySelector("#run");
     const output = document.querySelector("#output");
+    const token = document.querySelector("#token");
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -290,9 +304,11 @@ function renderHome(): string {
       output.textContent = "Starting session...\\n";
 
       try {
+        const headers = { "Content-Type": "application/json" };
+        if (token.value) headers.Authorization = "Bearer " + token.value;
         const response = await fetch("/api/sessions", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({ input: form.input.value })
         });
 

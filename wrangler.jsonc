@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "sre-incident-response-agent",
+  "name": "open-sre-incident-response-agent",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-06",
   "observability": {
@@ -10,5 +10,29 @@
     "OPENAI_PROJECT": "proj_mRsQVx3NjOamxeXH6UrLowoC",
     "OPENAI_BASE_URL": "https://api.openai.com/v1",
     "AGENTS_ENVIRONMENT_TYPE": "openai_hosted"
-  }
+  },
+  "ratelimits": [
+    {
+      "name": "SESSION_ATTEMPT_LIMITER",
+      "namespace_id": "51005",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SESSION_START_LIMITER",
+        "class_name": "SessionStartLimiter"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SessionStartLimiter"]
+    }
+  ]
 }
