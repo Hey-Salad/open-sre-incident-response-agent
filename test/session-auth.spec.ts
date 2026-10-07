@@ -2,7 +2,7 @@ import { createExecutionContext, runInDurableObject, waitOnExecutionContext } fr
 import { env } from "cloudflare:workers";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
-import worker from "../src";
+import worker, { apiBase } from "../src";
 import type { Env } from "../src/env";
 import {
   GLOBAL_SESSION_START_LIMIT,
@@ -14,14 +14,15 @@ import { network } from "./network";
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const SECRET = "s".repeat(MIN_AUTH_SECRET_LENGTH);
+const PUBLIC_OPENAI_BASE_URL = "https://api.openai.com/v1"; // pragma: allowlist secret
 
 let outboundCalls = 0;
 
-function sessionEnv(options: { secret?: string; limiter?: RateLimit } = {}): Env {
+function sessionEnv(options: { secret?: string; limiter?: RateLimit; baseUrl?: string } = {}): Env {
   const overrides: Record<string, unknown> = {
     SESSION_AUTH_SECRET: options.secret === undefined ? SECRET : options.secret,
     OPENAI_API_KEY: "test-openai-key",
-    OPENAI_BASE_URL: "https://api.example.test/v1",
+    OPENAI_BASE_URL: options.baseUrl === undefined ? "https://api.example.test/v1" : options.baseUrl,
     OPENAI_PROJECT: "proj_test",
     AGENTS_ENVIRONMENT_TYPE: "none",
   };
@@ -37,7 +38,10 @@ function sessionEnv(options: { secret?: string; limiter?: RateLimit } = {}): Env
   }) as Env;
 }
 
-async function callWorker(request: Request, options: { secret?: string; limiter?: RateLimit } = {}): Promise<Response> {
+async function callWorker(
+  request: Request,
+  options: { secret?: string; limiter?: RateLimit; baseUrl?: string } = {},
+): Promise<Response> {
   const ctx = createExecutionContext();
   const response = await worker.fetch(request, sessionEnv(options), ctx);
   await waitOnExecutionContext(ctx);
@@ -185,6 +189,32 @@ describe.sequential("session start auth and limits", () => {
     expect(Number(capped.headers.get("Retry-After"))).toBeGreaterThan(0);
     expect(await capped.json()).toEqual({ error: "Too many requests." });
     expect(outboundCalls).toBe(GLOBAL_SESSION_START_LIMIT * 2);
+  });
+
+  it("falls back to the public OpenAI API base URL", async () => {
+    expect(apiBase({ OPENAI_BASE_URL: "" } as Env)).toBe(PUBLIC_OPENAI_BASE_URL);
+
+    const requested: string[] = [];
+    network.use(
+      http.post(`${PUBLIC_OPENAI_BASE_URL}/agents`, ({ request }) => {
+        requested.push(request.url);
+        return HttpResponse.json({ id: "agent_test" });
+      }),
+      http.post(`${PUBLIC_OPENAI_BASE_URL}/agents/sessions`, ({ request }) => {
+        requested.push(request.url);
+        return new HttpResponse("data: hello\n\n", {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }),
+    );
+
+    const response = await callWorker(sessionRequest({ ip: "203.0.113.90", token: SECRET }), { baseUrl: "" });
+    expect(response.status).toBe(200);
+    expect(requested).toEqual([
+      `${PUBLIC_OPENAI_BASE_URL}/agents`,
+      `${PUBLIC_OPENAI_BASE_URL}/agents/sessions`,
+    ]);
   });
 
   it("drops global hits once they are older than 60 seconds", async () => {

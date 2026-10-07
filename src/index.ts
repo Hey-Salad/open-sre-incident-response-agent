@@ -119,7 +119,7 @@ async function createAndStreamSession(request: Request, env: Env): Promise<Respo
   });
 }
 
-function apiBase(env: Env): string {
+export function apiBase(env: Env): string {
   return (env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
 }
 
